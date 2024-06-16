@@ -3,7 +3,9 @@ import re
 import csv
 import sys
 import logging
+import controlPrograma as con
 
+MAX_COUNT = 300000000000000
 #Directory where the parsed information is going to get written
 OUTPUT_FP = os.path.join(os.getcwd(),"output")
 
@@ -163,10 +165,61 @@ def parse_access_log(file_path):
                 m[ip][recurso] = 1
                 m[ip][month_year] = 1
 
-            if count == 3000000:
+            if count == MAX_COUNT:
                 break
 
     return m
+
+
+
+
+def group_csv_info(data):
+    pattern = re.compile(r'(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})')
+    control = con.ControlPrograma()
+    count = 0
+    p = {}
+
+    #Hacemos un ciclo sobre cada linea de la variable data
+    for line in data:
+        count   += 1
+        ip       = line[0]
+        hostname = line[1]
+        ip_host  = ip.replace(".", "-")
+
+        control.setIp(ip)
+        tipo                = control.tipo()
+        clase               = "Clase " + control.clase()
+
+        if ip==hostname:
+            hostname = "Mismo Hostname que IP ([Errno 1] Unknown host)"
+        if ip_host in hostname:
+            hostname = hostname[hostname.find(".")+1:]
+        if ip in hostname: 
+            hostname = hostname[re.search(pattern, hostname).end()+1:]
+
+
+        if hostname in p:
+            p[hostname]["total"] += 1
+            if tipo in p[hostname]["Rangos de direcciones"]:
+                p[hostname]["Rangos de direcciones"][tipo] += 1
+            else:
+                p[hostname]["Rangos de direcciones"][tipo] = 1
+
+            if clase in p[hostname]["Rangos de direcciones"]:
+                p[hostname]["Rangos de direcciones"][clase] += 1
+            else:
+                p[hostname]["Rangos de direcciones"][clase] = 1
+        else:
+            p[hostname] = {}
+            p[hostname]["Rangos de direcciones"] = {}
+            p[hostname]["Rangos de direcciones"][tipo] = 1
+            p[hostname]["Rangos de direcciones"][clase] = 1
+            p[hostname]["total"] = 1
+
+        if count == MAX_COUNT:
+            break
+    #pretty(dict(sorted(p.items(), reverse=True, key=lambda item: item[1]['total'])))
+    return dict(sorted(p.items(), reverse=True, key=lambda item: item[1]['total']))
 
 # Función para leer y parsear el archivo RSVP-agent-log
 def parse_rsvp_agent_log(file_path):
@@ -200,7 +253,7 @@ def parse_client_hostname_csv(file_path):
     return headers, data
 
 
-# Guardar los resultados en un archivo CSV
+# Guardar los resultados de la agrupacion de access.log en un archivo CSV
 def save_to_csv(data, file_path):
     with open(file_path, 'w', newline='') as csvfile:
         writer = csv.writer(csvfile)
@@ -208,6 +261,19 @@ def save_to_csv(data, file_path):
         for ip, details in data.items():
             for key, value in details.items():
                 writer.writerow([ip, key, value])
+
+# Guardar los resultados de client_hostname en un archivo CSV
+def save_client_hostname_to_csv(data, file_path):
+    with open(file_path, 'w', newline='') as csvfile:
+        writer = csv.writer(csvfile)
+        writer.writerow(['Host', 'Tipo de IP', 'Conteo'])
+        for ip, details in data.items():
+            for key, value in details.items():
+                if isinstance(value, dict):
+                    for key, value in value.items():
+                        writer.writerow([ip, key, value])
+                else:
+                    writer.writerow([ip, key, value])
 
 
 # Contar la frecuencia de IPs en los registros del access log
@@ -272,17 +338,14 @@ def handle_web_logs(file_path):
 
     logging.info("* Parsed info written to {}*".format(output_fp))
 
+
 #maneja los logs de hosts
 def handle_csv_logs(csv_fp):
     client_hostname_headers, client_hostname_data = parse_client_hostname_csv(csv_fp)
-
-    # Guardar el archivo client_hostname.csv procesado en un archivo de texto
+    parsed_log = group_csv_info(client_hostname_data)
+    # Guardar el archivo client_hostname.csv procesado en un archivo CSV
     output_fp = os.path.join(OUTPUT_FP,'parsed_client_hostname.csv')
-    with open(output_fp, 'w', newline='') as f:
-        writer = csv.writer(f)
-        writer.writerow(client_hostname_headers)
-        writer.writerows(client_hostname_data)
-
+    save_client_hostname_to_csv(parsed_log, output_fp)
     logging.info("* Parsed info written to {}*".format(output_fp))
 
 def main(csv_log_fp,web_log_fp,rsvp_fp,access_fp):
